@@ -212,6 +212,29 @@ function parseEscPos(buffer) {
       continue;
     }
 
+    // GS v 0 m xL xH yL yH (Raster bit image mode)
+    if (b === 0x1D && buffer[i+1] === 0x76 && buffer[i+2] === 0x30) {
+      flushText();
+      const mode = buffer[i+3];
+      const xL = buffer[i+4];
+      const xH = buffer[i+5];
+      const yL = buffer[i+6];
+      const yH = buffer[i+7];
+      const bytesPerRow = xL + (xH << 8);
+      const height = yL + (yH << 8);
+      const dataBytes = bytesPerRow * height;
+      
+      items.push({
+        type: 'image',
+        width: bytesPerRow * 8,
+        height: height,
+        align: currentAlign
+      });
+      
+      i += 8 + dataBytes;
+      continue;
+    }
+
     // LF (Line Feed) — if we're in an image strip sequence, skip it
     if (b === 0x0A) {
       if (currentImageStrip) {

@@ -121,9 +121,10 @@ class QueueManager {
 
     this.active = false;
     
-    // Small delay to let the printer's firmware settle before processing the next job,
-    // especially important after raster image data (GS v 0)
-    setTimeout(() => this._process(), 150);
+    // Delay to let the printer's firmware settle before processing the next job.
+    // Longer delay after image jobs (GS v 0 sends large data buffers)
+    const delay = (job.type === 'image' || job.type === 'qr' || job.type === 'barcode') ? 2000 : 300;
+    setTimeout(() => this._process(), delay);
   }
 }
 

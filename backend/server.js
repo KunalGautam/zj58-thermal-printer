@@ -6,8 +6,6 @@ const { driver, getPrintersList } = require('./driver');
 const EscPosEncoder = require('./encoder');
 const { processImage } = require('./processor');
 const queue = require('./queue');
-const QRCode = require('qrcode');
-const bwipjs = require('bwip-js');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -159,42 +157,65 @@ app.post('/api/print/text', (req, res) => {
 
 // 6. POST /api/print/qr
 app.post('/api/print/qr', async (req, res) => {
-  const { text, size, ecc, align, feedLines } = req.body;
+  const { text, size, ecc, align, feedLines, mode } = req.body;
 
   if (!text) {
     return res.status(400).json({ success: false, error: 'QR Code text/data is required.' });
   }
 
   try {
-    const qrWidth = size ? Number(size) * 40 : 160;
-    const qrPngBuffer = await QRCode.toBuffer(text, {
-      type: 'png',
-      margin: 1,
-      width: Math.min(384, qrWidth),
-      errorCorrectionLevel: ecc || 'M'
-    });
+    // mode: 'native' or 'image' (default: 'image' for better compatibility with ZJ-58 clones)
+    const useNative = mode === 'native';
 
-    const { width: imgW, height: imgH, buffer: packedBuffer } = await processImage(qrPngBuffer, {
-      brightness: 0,
-      contrast: 0,
-      dither: 'threshold'
-    });
+    if (useNative) {
+      const encoder = new EscPosEncoder();
+      encoder.init();
+      
+      if (align) encoder.align(align);
+      encoder.qrCode(text, { size: size || 4, ecc: ecc || 'M' });
+      
+      encoder.feed(feedLines !== undefined ? Number(feedLines) : 4);
+      
+      const buffer = encoder.getBuffer();
+      const jobId = queue.enqueue(buffer, {
+        type: 'qr',
+        description: `QR Code (Native): "${text.substring(0, 20)}${text.length > 20 ? '...' : ''}"`
+      });
 
-    const encoder = new EscPosEncoder();
-    encoder.init();
-    
-    if (align) encoder.align(align);
-    encoder.image(packedBuffer, imgW, imgH);
-    
-    encoder.feed(feedLines !== undefined ? Number(feedLines) : 4);
-    
-    const buffer = encoder.getBuffer();
-    const jobId = queue.enqueue(buffer, {
-      type: 'qr',
-      description: `QR Code (as Image): "${text.substring(0, 20)}${text.length > 20 ? '...' : ''}"`
-    });
+      res.json({ success: true, jobId, message: 'QR print job added to queue.' });
+    } else {
+      // Fallback: render QR as image
+      const QRCode = require('qrcode');
+      const qrWidth = size ? Number(size) * 40 : 160;
+      const qrPngBuffer = await QRCode.toBuffer(text, {
+        type: 'png',
+        margin: 1,
+        width: Math.min(384, qrWidth),
+        errorCorrectionLevel: ecc || 'M'
+      });
 
-    res.json({ success: true, jobId, message: 'QR print job added to queue.' });
+      const { width: imgW, height: imgH, buffer: packedBuffer } = await processImage(qrPngBuffer, {
+        brightness: 0,
+        contrast: 0,
+        dither: 'threshold'
+      });
+
+      const encoder = new EscPosEncoder();
+      encoder.init();
+      
+      if (align) encoder.align(align);
+      encoder.imageRaster(packedBuffer, imgW, imgH, 0);
+      
+      encoder.feed(feedLines !== undefined ? Number(feedLines) : 4);
+      
+      const buffer = encoder.getBuffer();
+      const jobId = queue.enqueue(buffer, {
+        type: 'qr',
+        description: `QR Code (Image): "${text.substring(0, 20)}${text.length > 20 ? '...' : ''}"`
+      });
+
+      res.json({ success: true, jobId, message: 'QR print job added to queue (image mode).' });
+    }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -202,51 +223,78 @@ app.post('/api/print/qr', async (req, res) => {
 
 // 7. POST /api/print/barcode
 app.post('/api/print/barcode', async (req, res) => {
-  const { text, type, width, height, hri, align, feedLines } = req.body;
+  const { text, type, width, height, hri, align, feedLines, mode } = req.body;
 
   if (!text) {
     return res.status(400).json({ success: false, error: 'Barcode text/data is required.' });
   }
 
   try {
-    let bcid = (type || 'CODE128').toLowerCase().replace('-', '');
-    if (bcid === 'ean13') bcid = 'ean13';
-    else if (bcid === 'ean8') bcid = 'ean8';
-    else if (bcid === 'upca') bcid = 'upca';
-    else if (bcid === 'code39') bcid = 'code39';
-    else bcid = 'code128';
+    // mode: 'native' or 'image' (default: 'image' for better compatibility with ZJ-58 clones)
+    const useNative = mode === 'native';
 
-    const barcodePngBuffer = await bwipjs.toBuffer({
-      bcid: bcid,
-      text: text,
-      scale: width !== undefined ? Math.min(5, Math.max(1, Number(width))) : 2,
-      height: height ? Math.round(Number(height) / 8) : 10,
-      includetext: hri !== 'none',
-      textxalign: 'center',
-      backgroundcolor: 'ffffff',
-    });
+    if (useNative) {
+      const encoder = new EscPosEncoder();
+      encoder.init();
+      
+      if (align) encoder.align(align);
+      encoder.barcode(text, type || 'CODE128', {
+        width: width || 3,
+        height: height || 80,
+        hri: hri || 'below'
+      });
+      
+      encoder.feed(feedLines !== undefined ? Number(feedLines) : 4);
+      
+      const buffer = encoder.getBuffer();
+      const jobId = queue.enqueue(buffer, {
+        type: 'barcode',
+        description: `Barcode ${type || 'CODE128'} (Native): "${text}"`
+      });
 
-    const { width: imgW, height: imgH, buffer: packedBuffer } = await processImage(barcodePngBuffer, {
-      brightness: 0,
-      contrast: 0,
-      dither: 'threshold'
-    });
+      res.json({ success: true, jobId, message: 'Barcode print job added to queue.' });
+    } else {
+      // Fallback: render barcode as image
+      const bwipjs = require('bwip-js');
+      let bcid = (type || 'CODE128').toLowerCase().replace('-', '');
+      if (bcid === 'ean13') bcid = 'ean13';
+      else if (bcid === 'ean8') bcid = 'ean8';
+      else if (bcid === 'upca') bcid = 'upca';
+      else if (bcid === 'code39') bcid = 'code39';
+      else bcid = 'code128';
 
-    const encoder = new EscPosEncoder();
-    encoder.init();
-    
-    if (align) encoder.align(align);
-    encoder.image(packedBuffer, imgW, imgH);
-    
-    encoder.feed(feedLines !== undefined ? Number(feedLines) : 4);
-    
-    const buffer = encoder.getBuffer();
-    const jobId = queue.enqueue(buffer, {
-      type: 'barcode',
-      description: `Barcode ${type || 'CODE128'} (as Image): "${text}"`
-    });
+      const barcodePngBuffer = await bwipjs.toBuffer({
+        bcid: bcid,
+        text: text,
+        scale: width !== undefined ? Math.min(5, Math.max(1, Number(width))) : 2,
+        height: height ? Math.round(Number(height) / 8) : 10,
+        includetext: hri !== 'none',
+        textxalign: 'center',
+        backgroundcolor: 'ffffff',
+      });
 
-    res.json({ success: true, jobId, message: 'Barcode print job added to queue.' });
+      const { width: imgW, height: imgH, buffer: packedBuffer } = await processImage(barcodePngBuffer, {
+        brightness: 0,
+        contrast: 0,
+        dither: 'threshold'
+      });
+
+      const encoder = new EscPosEncoder();
+      encoder.init();
+      
+      if (align) encoder.align(align);
+      encoder.imageRaster(packedBuffer, imgW, imgH, 0);
+      
+      encoder.feed(feedLines !== undefined ? Number(feedLines) : 4);
+      
+      const buffer = encoder.getBuffer();
+      const jobId = queue.enqueue(buffer, {
+        type: 'barcode',
+        description: `Barcode ${type || 'CODE128'} (Image): "${text}"`
+      });
+
+      res.json({ success: true, jobId, message: 'Barcode print job added to queue (image mode).' });
+    }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -298,7 +346,8 @@ app.post('/api/print/image', upload.single('imageFile'), async (req, res) => {
     encoder.init();
     
     if (align) encoder.align(align);
-    encoder.image(packedBuffer, width, height);
+    // Use GS v 0 raster mode (mode 0 = normal) for better ZJ-58 compatibility
+    encoder.imageRaster(packedBuffer, width, height, 0);
     encoder.feed(feedLines);
     
     const printBuffer = encoder.getBuffer();

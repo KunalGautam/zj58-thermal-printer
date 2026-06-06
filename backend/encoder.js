@@ -304,6 +304,34 @@ class EscPosEncoder {
   }
 
   /**
+   * Generate ESC/POS commands to print a 1bpp image using GS v 0 (raster bit image mode).
+   * This is often better supported on ZJ-58 and avoids elongation issues.
+   * Mode 0 = normal, 1 = double-width, 32 = double-height, 33 = double-width+height
+   */
+  imageRaster(packedBuffer, width, height, mode = 0) {
+    const bytesPerRow = Math.ceil(width / 8);
+    
+    // GS v 0 m xL xH yL yH d1...dk
+    // xL, xH = width in bytes (xL + xH * 256)
+    // yL, yH = height in dots (yL + yH * 256)
+    const xL = bytesPerRow & 0xFF;
+    const xH = (bytesPerRow >> 8) & 0xFF;
+    const yL = height & 0xFF;
+    const yH = (height >> 8) & 0xFF;
+
+    // GS v 0 m xL xH yL yH
+    this.write([0x1D, 0x76, 0x30, mode, xL, xH, yL, yH]);
+    
+    // Send the packed buffer data directly (row-major, MSB-first)
+    this.write(packedBuffer);
+    
+    // LF to ensure printer processes the raster data
+    this.write([0x0A]);
+    
+    return this;
+  }
+
+  /**
    * Return the compiled Buffer of ESC/POS commands
    */
   getBuffer() {
