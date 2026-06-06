@@ -122,8 +122,9 @@ class QueueManager {
     this.active = false;
     
     // Delay to let the printer's firmware settle before processing the next job.
-    // Longer delay after image jobs (GS v 0 sends large data buffers)
-    const delay = (job.type === 'image' || job.type === 'qr' || job.type === 'barcode') ? 2000 : 300;
+    // Native QR/barcode need extra time for symbol storage processing + reset
+    // Images need time for raster data processing + reset
+    const delay = (job.type === 'image' || job.type === 'qr' || job.type === 'barcode') ? 3000 : 500;
     setTimeout(() => this._process(), delay);
   }
 }

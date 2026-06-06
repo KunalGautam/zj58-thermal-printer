@@ -662,16 +662,19 @@ class UsbPrinterDriver {
 
       // Physical printer writing with chunking to prevent buffer overflow
       const CHUNK_SIZE = 64; // 64 bytes is the standard USB Full Speed packet size
-      // Larger buffers (images) need longer inter-chunk delays
+      // Native commands (QR, barcode, reset) need more time to process
+      const isNativeCommand = buffer.length < 500 && (buffer.includes(0x1D, 0) || buffer.includes(0x1B, 0));
       const isLargeTransfer = buffer.length > 4096;
-      const CHUNK_DELAY = isLargeTransfer ? 30 : 10;
+      // Small buffers (init, reset, native commands) send in single transfer to avoid command fragmentation
+      const useSingleTransfer = buffer.length <= CHUNK_SIZE;
+      const CHUNK_DELAY = isLargeTransfer ? 50 : (isNativeCommand ? 30 : 15);
       
       (async () => {
         try {
-          for (let offset = 0; offset < buffer.length; offset += CHUNK_SIZE) {
-            const chunk = buffer.subarray(offset, offset + CHUNK_SIZE);
+          if (useSingleTransfer) {
+            // Send small buffers atomically to prevent command fragmentation
             await new Promise((res, rej) => {
-              this.outEndpoint.transfer(chunk, (err) => {
+              this.outEndpoint.transfer(buffer, (err) => {
                 if (err) {
                   console.error('[Driver] USB write transfer failed:', err);
                   return rej(err);
@@ -679,13 +682,25 @@ class UsbPrinterDriver {
                 res();
               });
             });
-            // Delay matches slower physical print speeds to avoid buffer overruns
-            await new Promise(res => setTimeout(res, CHUNK_DELAY));
+            await new Promise(res => setTimeout(res, isNativeCommand ? 30 : 15));
+          } else {
+            for (let offset = 0; offset < buffer.length; offset += CHUNK_SIZE) {
+              const chunk = buffer.subarray(offset, offset + CHUNK_SIZE);
+              await new Promise((res, rej) => {
+                this.outEndpoint.transfer(chunk, (err) => {
+                  if (err) {
+                    console.error('[Driver] USB write transfer failed:', err);
+                    return rej(err);
+                  }
+                  res();
+                });
+              });
+              await new Promise(res => setTimeout(res, CHUNK_DELAY));
+            }
           }
-          // Extra settle time after large transfers (GS v 0 raster images)
-          if (isLargeTransfer) {
-            await new Promise(res => setTimeout(res, 500));
-          }
+          // Extra settle time after large transfers (GS v 0 raster images) or native commands
+          const settleTime = isLargeTransfer ? 1500 : (isNativeCommand ? 800 : 200);
+          await new Promise(res => setTimeout(res, settleTime));
           resolve();
         } catch (err) {
           reject(err);
