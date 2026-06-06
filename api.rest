@@ -1,0 +1,146 @@
+@host = http://localhost:5000
+@contentType = application/json
+
+### 1. List Available USB Printers
+# Scans system USB buses and returns printers/simulation nodes
+GET {{host}}/api/printer/list
+Accept: {{contentType}}
+
+###
+
+### 2. Get Printer Status & Job Queue
+# Returns printer connection state, queue lengths, and job logs
+GET {{host}}/api/printer/status
+Accept: {{contentType}}
+
+###
+
+### 3. Connect to Printer (Virtual Mock Mode)
+# Connect to VID 0, PID 0 to trigger the virtual printer sandbox
+POST {{host}}/api/printer/connect
+Content-Type: {{contentType}}
+
+{
+  "vendorId": 0,
+  "productId": 0
+}
+
+###
+
+### 4. Connect to Physical ZJ-58 Printer
+# Connect using actual Vendor ID and Product ID (Zijiang typical 0x0416:0x5011 -> 1046:20497)
+POST {{host}}/api/printer/connect
+Content-Type: {{contentType}}
+
+{
+  "vendorId": 1046,
+  "productId": 20497
+}
+
+###
+
+### 5. Print Formatted Text
+# Prints auto-wrapped formatted lines of text with spacing and feeds
+POST {{host}}/api/print/text
+Content-Type: {{contentType}}
+
+{
+  "text": "ANTIGRAVITY CAFE\n123 Astro Street\n--------------------------------\n1x Mocha Espresso    $4.50\n1x Warm Croissant    $3.00\n--------------------------------\nTOTAL:               $7.50\n--------------------------------",
+  "bold": false,
+  "underline": false,
+  "inverse": false,
+  "emphasized": false,
+  "align": "center",
+  "fontSize": "normal",
+  "lineSpacing": 30,
+  "feedLines": 4
+}
+
+###
+
+### 6. Print Double-Sized Bold Text
+POST {{host}}/api/print/text
+Content-Type: {{contentType}}
+
+{
+  "text": "DOUBLE SIZE BOLD",
+  "bold": true,
+  "underline": false,
+  "inverse": false,
+  "emphasized": true,
+  "align": "center",
+  "fontSize": "double-size",
+  "feedLines": 3
+}
+
+###
+
+### 7. Print Native QR Code
+# Generates native Model 2 symbol storage QR codes
+POST {{host}}/api/print/qr
+Content-Type: {{contentType}}
+
+{
+  "text": "https://deepmind.google",
+  "size": 5,
+  "ecc": "Q",
+  "align": "center",
+  "feedLines": 4
+}
+
+###
+
+### 8. Print Native CODE128 Barcode
+# Generates System B CODE128 barcode (automatically handles charset prefixes)
+POST {{host}}/api/print/barcode
+Content-Type: {{contentType}}
+
+{
+  "text": "58580101",
+  "type": "CODE128",
+  "width": 3,
+  "height": 70,
+  "hri": "below",
+  "align": "center",
+  "feedLines": 4
+}
+
+###
+
+### 9. Print Native CODE39 Barcode
+# Generates System B CODE39 barcode
+POST {{host}}/api/print/barcode
+Content-Type: {{contentType}}
+
+{
+  "text": "CAFE123",
+  "type": "CODE39",
+  "width": 2,
+  "height": 60,
+  "hri": "below",
+  "align": "center",
+  "feedLines": 4
+}
+
+###
+
+### 10. Print Grayscale Dithered Image (Base64 Payload)
+# Resizes to 384px, applies filters, applies Atkinson dither, prints raster
+POST {{host}}/api/print/image
+Content-Type: {{contentType}}
+
+{
+  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAPklEQVR42mNkQAOMQJoRCDMBaUYgzQikGYE0I5BmBNKMQJoRSDKiK2QEEhAh2EIkGIIthC1EgiHYQthCfDYDAEeeA1P7kP3qAAAAAElFTkSuQmCC",
+  "brightness": 10,
+  "contrast": 15,
+  "dither": "atkinson",
+  "align": "center",
+  "feedLines": 4
+}
+
+###
+
+### 11. Disconnect Printer
+# Disconnects and releases claimed USB nodes
+POST {{host}}/api/printer/disconnect
+Content-Type: {{contentType}}
