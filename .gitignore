@@ -1,0 +1,15 @@
+# Dependency directories
+node_modules/
+
+# Production builds
+dist/
+frontend/dist/
+
+# Logs and print output simulations
+backend/mock_print_output.txt
+*.log
+
+# OS metadata
+.DS_Store
+Thumbs.db
+node_modules
