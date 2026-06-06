@@ -254,20 +254,52 @@ class EscPosEncoder {
   }
 
   /**
-   * Generate ESC/POS commands to print a 1bpp raster bit-image (GS v 0)
+   * Generate ESC/POS commands to print a 1bpp image using ESC * (bit-image line mode).
+   * Uses mode 1 (8-dot double density) which is universally supported by all ESC/POS printers.
+   * The image is printed in 8-row vertical strips, each sent as column-major data.
    */
   image(packedBuffer, width, height) {
     const bytesPerRow = Math.ceil(width / 8);
-    const xL = bytesPerRow & 0xFF;
-    const xH = (bytesPerRow >> 8) & 0xFF;
-    const yL = height & 0xFF;
-    const yH = (height >> 8) & 0xFF;
+    const numStrips = Math.ceil(height / 8);
 
-    // GS v 0 m xL xH yL yH d1...dk
-    // m = 0: Normal mode
-    this.write([0x1D, 0x76, 0x30, 0, xL, xH, yL, yH]);
-    this.write(packedBuffer);
-    
+    // Set line spacing to exactly 8 dots so strips tile seamlessly with no gaps
+    this.write([0x1B, 0x33, 8]);
+
+    for (let strip = 0; strip < numStrips; strip++) {
+      const stripTop = strip * 8;
+
+      // ESC * m nL nH  — Select bit-image mode
+      // m=1: 8-dot double density (1:1 dot mapping on 384-dot ZJ-58 printhead)
+      const nL = width & 0xFF;
+      const nH = (width >> 8) & 0xFF;
+      this.write([0x1B, 0x2A, 1, nL, nH]);
+
+      // Build column-major data: one byte per column, MSB = top row of strip
+      const stripData = Buffer.alloc(width);
+      for (let x = 0; x < width; x++) {
+        const srcByteCol = Math.floor(x / 8);
+        const srcBitMask = 0x80 >> (x % 8); // MSB-first packed input
+
+        let columnByte = 0;
+        for (let bit = 0; bit < 8; bit++) {
+          const row = stripTop + bit;
+          if (row < height) {
+            const srcByte = packedBuffer[row * bytesPerRow + srcByteCol];
+            if (srcByte & srcBitMask) {
+              columnByte |= (0x80 >> bit); // MSB = top of strip
+            }
+          }
+        }
+        stripData[x] = columnByte;
+      }
+
+      this.write(stripData);
+      this.write([0x0A]); // LF — advance paper by current line spacing (8 dots)
+    }
+
+    // Reset line spacing to default
+    this.write([0x1B, 0x32]);
+
     return this;
   }
 

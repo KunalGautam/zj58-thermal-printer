@@ -136,10 +136,12 @@ console.log('\n=== Running Image Processing Dither Tests ===');
     const enc6 = new EscPosEncoder();
     enc6.init().image(qrProcessed.buffer, qrProcessed.width, qrProcessed.height);
     const buf6 = enc6.getBuffer();
-    // Ensure command buffer has init [0x1B, 0x40] followed by image command [0x1D, 0x76, 0x30, 0x00]
+    // Ensure command buffer has init [0x1B, 0x40] followed by:
+    //   ESC 3 8 (line spacing = 8 dots) then ESC * 1 (bit-image double density)
     assert.deepStrictEqual(buf6.slice(0, 2), Buffer.from([0x1B, 0x40]));
-    assert.deepStrictEqual(buf6.slice(2, 6), Buffer.from([0x1D, 0x76, 0x30, 0x00]));
-    console.log('✔ Test 6 passed: Image-based QR Code outputs GS v 0 command.');
+    assert.deepStrictEqual(buf6.slice(2, 5), Buffer.from([0x1B, 0x33, 0x08]));
+    assert.deepStrictEqual(buf6.slice(5, 8), Buffer.from([0x1B, 0x2A, 0x01]));
+    console.log('✔ Test 6 passed: Image-based QR Code outputs ESC * bit-image command.');
 
     // Test 7: Image-based Barcode generation
     const barcodePngBuffer = await bwipjs.toBuffer({
@@ -159,8 +161,9 @@ console.log('\n=== Running Image Processing Dither Tests ===');
     enc7.init().image(bcProcessed.buffer, bcProcessed.width, bcProcessed.height);
     const buf7 = enc7.getBuffer();
     assert.deepStrictEqual(buf7.slice(0, 2), Buffer.from([0x1B, 0x40]));
-    assert.deepStrictEqual(buf7.slice(2, 6), Buffer.from([0x1D, 0x76, 0x30, 0x00]));
-    console.log('✔ Test 7 passed: Image-based Barcode outputs GS v 0 command.');
+    assert.deepStrictEqual(buf7.slice(2, 5), Buffer.from([0x1B, 0x33, 0x08]));
+    assert.deepStrictEqual(buf7.slice(5, 8), Buffer.from([0x1B, 0x2A, 0x01]));
+    console.log('✔ Test 7 passed: Image-based Barcode outputs ESC * bit-image command.');
 
     console.log('\n=== All Automated Verification Tests Passed Successfully! ===');
     process.exit(0);

@@ -51,6 +51,7 @@ function parseEscPos(buffer) {
   let currentUnderline = false;
   let currentInverse = false;
   let currentSize = 'normal';
+  let currentImageStrip = null; // Tracks ESC * strip accumulation for image rendering
   let textAccumulator = '';
   
   const flushText = () => {
@@ -188,45 +189,96 @@ function parseEscPos(buffer) {
       continue;
     }
     
-    // GS v 0 (Image)
-    if (b === 0x1D && buffer[i+1] === 0x76 && buffer[i+2] === 0x30) {
+    // ESC * m nL nH (Bit-image line mode)
+    if (b === 0x1B && i + 4 < buffer.length && buffer[i+1] === 0x2A) {
       flushText();
-      const m = buffer[i+3];
-      const xL = buffer[i+4];
-      const xH = buffer[i+5];
-      const yL = buffer[i+6];
-      const yH = buffer[i+7];
-      const bytesPerRow = xL + (xH << 8);
-      const height = yL + (yH << 8);
-      
-      items.push({
-        type: 'image',
-        width: bytesPerRow * 8,
-        height: height,
-        align: currentAlign
-      });
-      
-      i += 8 + (bytesPerRow * height);
+      const m = buffer[i+2];
+      const nL = buffer[i+3];
+      const nH = buffer[i+4];
+      const numDots = nL + (nH << 8);
+      // Mode 0,1: 1 byte per column (8 dots high)
+      // Mode 32,33: 3 bytes per column (24 dots high)
+      const bytesPerCol = (m === 32 || m === 33) ? 3 : 1;
+      const dataBytes = numDots * bytesPerCol;
+      const dotsHigh = (m === 32 || m === 33) ? 24 : 8;
+
+      // Track running image dimensions across consecutive strips
+      if (!currentImageStrip) {
+        currentImageStrip = { width: numDots, height: 0 };
+      }
+      currentImageStrip.height += dotsHigh;
+
+      i += 5 + dataBytes;
       continue;
     }
-    
-    // ESC 3, ESC 2 (Line spacing)
-    if (b === 0x1B && buffer[i+1] === 0x33) { i += 3; continue; }
-    if (b === 0x1B && buffer[i+1] === 0x32) { i += 2; continue; }
-    
+
+    // LF (Line Feed) — if we're in an image strip sequence, skip it
+    if (b === 0x0A) {
+      if (currentImageStrip) {
+        // LF between image strips, just advance
+        i++;
+        continue;
+      }
+      textAccumulator += '\n';
+      i++;
+      continue;
+    }
+
+    // ESC 3, ESC 2 (Line spacing) — also flush any accumulated image
+    if (b === 0x1B && buffer[i+1] === 0x33) {
+      if (currentImageStrip) {
+        // ESC 3 before image sets strip spacing; don't flush yet
+      }
+      i += 3; continue;
+    }
+    if (b === 0x1B && buffer[i+1] === 0x32) {
+      // ESC 2 (reset line spacing) signals end of image strip sequence
+      if (currentImageStrip) {
+        items.push({
+          type: 'image',
+          width: currentImageStrip.width,
+          height: currentImageStrip.height,
+          align: currentAlign
+        });
+        currentImageStrip = null;
+      }
+      i += 2; continue;
+    }
+
     // ESC d (Feed)
     if (b === 0x1B && buffer[i+1] === 0x64) {
+      // Flush any in-progress image before the feed
+      if (currentImageStrip) {
+        items.push({
+          type: 'image',
+          width: currentImageStrip.width,
+          height: currentImageStrip.height,
+          align: currentAlign
+        });
+        currentImageStrip = null;
+      }
       flushText();
       items.push({ type: 'feed', lines: buffer[i+2] });
       i += 3;
       continue;
     }
-    
+
     // Regular character
     textAccumulator += String.fromCharCode(b);
     i++;
   }
-  
+
+  // Flush any remaining image at end-of-buffer
+  if (currentImageStrip) {
+    items.push({
+      type: 'image',
+      width: currentImageStrip.width,
+      height: currentImageStrip.height,
+      align: currentAlign
+    });
+    currentImageStrip = null;
+  }
+
   flushText();
   return items;
 }
