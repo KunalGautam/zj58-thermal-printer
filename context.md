@@ -52,14 +52,21 @@ Direct USB block writing requires OS-level permissions to release standard syste
 ### 1. Linux Setup (Permissions & Kernel Drivers)
 By default, Linux claims USB printers under the `usblp` kernel module, preventing Node.js from claiming the device.
 - **Detaching**: Our driver attempts to call `iface.detachKernelDriver()` automatically.
-- **Permissions**: Add a `udev` rule to allow raw USB writing without sudo privileges.
+- **Permissions**: Add a `udev` rule to allow raw USB writing without sudo privileges. We provide an automated helper script `setup-udev.sh` in the workspace root to handle this.
+  
+  Run the script:
+  ```bash
+  ./setup-udev.sh
+  ```
+  
+  Alternatively, you can configure it manually:
   1. Create a rules file:
      ```bash
      sudo nano /etc/udev/rules.d/99-thermal-printer.rules
      ```
   2. Add the following rule (replace `0416` and `5011` with your printer's VID and PID if different):
      ```udev
-     SUBSYSTEM=="usb", ATTR{idVendor}=="0416", ATTR{idProduct}=="5011", MODE="0660", GROUP="plugdev"
+     SUBSYSTEM=="usb", ATTR{idVendor}=="0416", ATTR{idProduct}=="5011", MODE="0666"
      ```
   3. Reload rules:
      ```bash

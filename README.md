@@ -68,6 +68,13 @@ Runs automated assertion tests verifying command outputs and image conversions:
 cd backend && node verify.js
 ```
 
+### 5. Resolve USB Access Permissions (Linux)
+If you encounter `LIBUSB_ERROR_ACCESS` when connecting to a physical printer on Linux, make the helper script executable and run it:
+```bash
+./setup-udev.sh
+```
+*Note: This writes a custom udev rule for VID 0416, PID 5011 (ZJ-58 defaults) and restarts the subsystem. Remember to unplug and replug the USB cable after running.*
+
 ---
 
 ## Technical Specifications
