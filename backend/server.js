@@ -110,24 +110,29 @@ app.post('/api/print/text', (req, res) => {
     if (Array.isArray(text)) {
       text.forEach((line) => {
         encoder.align(line.align || 'left');
-        encoder.lineSpacing(line.lineSpacing !== undefined ? Number(line.lineSpacing) : undefined);
+        // Treat lineSpacing=0 as "use default" (ESC 2) rather than "0 dots" (ESC 3 0)
+        // which would cause zero paper advance and invisible text
+        const ls = line.lineSpacing ? Number(line.lineSpacing) : undefined;
+        encoder.lineSpacing(ls);
         
         encoder.bold(!!line.bold);
         encoder.underline(!!line.underline);
         encoder.inverse(!!line.inverse);
-        encoder.emphasized(!!line.emphasized);
+        // Note: ESC G (double-strike) is omitted — not supported by basic ZJ-58 firmware
+        // and causes command parser desync when the printer doesn't recognize it
         
         encoder.fontSize(line.fontSize || 'normal');
         encoder.wrappedText(line.text || '', line.fontSize || 'normal');
       });
     } else {
       if (align) encoder.align(align);
-      if (lineSpacing !== undefined) encoder.lineSpacing(Number(lineSpacing));
+      // Treat lineSpacing=0 as "use default"
+      if (lineSpacing) encoder.lineSpacing(Number(lineSpacing));
       
       encoder.bold(!!bold);
       encoder.underline(!!underline);
       encoder.inverse(!!inverse);
-      encoder.emphasized(!!emphasized);
+      // ESC G omitted — see note above
       
       if (fontSize) encoder.fontSize(fontSize);
       encoder.wrappedText(text, fontSize);

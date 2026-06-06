@@ -121,8 +121,9 @@ class QueueManager {
 
     this.active = false;
     
-    // Trigger processing of the next job in the queue
-    setImmediate(() => this._process());
+    // Small delay to let the printer's firmware settle before processing the next job,
+    // especially important after raster image data (GS v 0)
+    setTimeout(() => this._process(), 150);
   }
 }
 
