@@ -30,9 +30,16 @@ async function processImage(imageBuffer, options = {}) {
       const r = image.bitmap.data[idx];
       const g = image.bitmap.data[idx + 1];
       const b = image.bitmap.data[idx + 2];
+      const a = image.bitmap.data[idx + 3];
       
-      // Calculate luminance (ITU-R BT.601 standard)
-      let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+      // Blend with white background using alpha channel (alpha from 0 to 1)
+      const alpha = a / 255;
+      const blendedR = r * alpha + 255 * (1 - alpha);
+      const blendedG = g * alpha + 255 * (1 - alpha);
+      const blendedB = b * alpha + 255 * (1 - alpha);
+      
+      // Calculate luminance (ITU-R BT.601 standard) using blended colors
+      let gray = 0.299 * blendedR + 0.587 * blendedG + 0.114 * blendedB;
       
       // Apply contrast
       if (contrast !== 0) {

@@ -292,8 +292,26 @@ export default function App() {
   const readImageFile = (file) => {
     const reader = new FileReader();
     reader.onload = (event) => {
-      setImageInput((prev) => ({ ...prev, value: event.target.result }));
-      addLog(`Loaded image: ${file.name} (${Math.round(file.size / 1024)} KB). Adjust settings in preview.`, 'info');
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        
+        try {
+          const pngBase64 = canvas.toDataURL('image/png');
+          setImageInput((prev) => ({ ...prev, value: pngBase64 }));
+          addLog(`Loaded and normalized image to PNG: ${file.name} (${Math.round(file.size / 1024)} KB). Adjust settings in preview.`, 'info');
+        } catch (err) {
+          addLog(`Failed to convert image to PNG: ${err.message}`, 'error');
+        }
+      };
+      img.onerror = () => {
+        addLog(`Unsupported image format or corrupt file: ${file.name}`, 'error');
+      };
+      img.src = event.target.result;
     };
     reader.readAsDataURL(file);
   };
@@ -330,6 +348,70 @@ export default function App() {
 
     setBuilderItems((prev) => [...prev, newItem]);
     addLog(`Added ${type.toUpperCase()} block to receipt layout.`, 'success');
+  };
+
+  // Directly appends elements to receipt layout from the Builder tab using standard defaults
+  const addDirectToBuilder = (type) => {
+    let newItem = {
+      id: Date.now().toString(),
+      type,
+      align: 'center'
+    };
+
+    if (type === 'text') {
+      newItem = {
+        ...newItem,
+        value: [
+          {
+            id: `l_${Date.now()}_1`,
+            text: 'NEW TEXT BLOCK',
+            bold: false,
+            align: 'center',
+            fontSize: 'normal',
+            lineSpacing: 0,
+            underline: false,
+            inverse: false,
+            emphasized: false
+          }
+        ],
+        feedLines: 1
+      };
+    } else if (type === 'qr') {
+      newItem = {
+        ...newItem,
+        value: 'https://deepmind.google',
+        size: 4,
+        ecc: 'M',
+        feedLines: 1
+      };
+    } else if (type === 'barcode') {
+      newItem = {
+        ...newItem,
+        value: '12345678',
+        typeFormat: 'CODE128',
+        width: 3,
+        height: 60,
+        hri: 'below',
+        feedLines: 1
+      };
+    } else if (type === 'image') {
+      if (!imageInput.value) {
+        addLog('No image loaded yet. Please select the "Image" tab first to upload a graphic.', 'error');
+        alert('No image loaded yet. Please select the "Image" tab first to upload a graphic.');
+        return;
+      }
+      newItem = {
+        ...newItem,
+        value: imageInput.value,
+        brightness: imageInput.brightness,
+        contrast: imageInput.contrast,
+        dither: imageInput.dither,
+        feedLines: 1
+      };
+    }
+
+    setBuilderItems((prev) => [...prev, newItem]);
+    addLog(`Directly added new ${type.toUpperCase()} element to layout.`, 'success');
   };
 
   // Update an existing item in the Receipt Builder layout
@@ -912,6 +994,41 @@ export default function App() {
                     >
                       Clear All
                     </button>
+                  </div>
+
+                  {/* Insert receipt element panel */}
+                  <div className="bg-[#080b11]/60 border border-slate-800/80 rounded-xl p-3.5 flex flex-col gap-2">
+                    <span className="text-[10px] font-mono-terminal font-semibold tracking-wider text-slate-400 uppercase">Insert Receipt Element</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <button 
+                        onClick={() => addDirectToBuilder('text')}
+                        className="px-2 py-1.5 rounded-lg border border-cyan-500/20 text-cyan-400 bg-[#0d1527]/40 hover:bg-cyan-500/10 hover:border-cyan-500/40 text-xs font-semibold tracking-tight transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        + Text
+                      </button>
+                      <button 
+                        onClick={() => addDirectToBuilder('qr')}
+                        className="px-2 py-1.5 rounded-lg border border-purple-500/20 text-purple-400 bg-[#150d27]/40 hover:bg-purple-500/10 hover:border-purple-500/40 text-xs font-semibold tracking-tight transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        + QR Code
+                      </button>
+                      <button 
+                        onClick={() => addDirectToBuilder('barcode')}
+                        className="px-2 py-1.5 rounded-lg border border-blue-500/20 text-blue-400 bg-[#0d1227]/40 hover:bg-blue-500/10 hover:border-blue-500/40 text-xs font-semibold tracking-tight transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Barcode className="w-3.5 h-3.5" />
+                        + Barcode
+                      </button>
+                      <button 
+                        onClick={() => addDirectToBuilder('image')}
+                        className="px-2 py-1.5 rounded-lg border border-emerald-500/20 text-emerald-400 bg-[#0d2715]/40 hover:bg-emerald-500/10 hover:border-emerald-500/40 text-xs font-semibold tracking-tight transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <ImageIcon className="w-3.5 h-3.5" />
+                        + Image
+                      </button>
+                    </div>
                   </div>
 
                   {builderItems.length === 0 ? (
@@ -1817,7 +1934,11 @@ export default function App() {
             </h2>
             <div className="w-full bg-[#080b11] border border-slate-800 rounded-lg p-4 overflow-y-auto max-h-[380px] flex justify-center">
               <ReceiptPreview items={activeTab === 'builder' ? builderItems : [
-                activeTab === 'text' ? { type: 'text', value: textInput.text, ...textInput } : null,
+                activeTab === 'text' 
+                  ? (isCompositeMode 
+                      ? { type: 'text', value: compositeLines, feedLines: compositeFeedLines } 
+                      : { type: 'text', value: textInput.text, ...textInput }) 
+                  : null,
                 activeTab === 'qr' ? { type: 'qr', value: qrInput.text, ...qrInput } : null,
                 activeTab === 'barcode' ? { type: 'barcode', value: barcodeInput.text, ...barcodeInput } : null,
                 activeTab === 'image' ? { type: 'image', value: imageInput.value, ...imageInput } : null

@@ -2,6 +2,321 @@ const usb = require('usb');
 const fs = require('fs');
 const path = require('path');
 
+function wrapText(text, max) {
+  if (!text) return [];
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+  
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    if (word.length > max) {
+      if (current) lines.push(current);
+      lines.push(word.substring(0, max));
+      current = word.substring(max);
+      continue;
+    }
+    const test = current ? current + ' ' + word : word;
+    if (test.length <= max) {
+      current = test;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function padString(str, width, align) {
+  const trimmed = (str || '').trim().substring(0, width - 4);
+  const remaining = width - 4 - trimmed.length;
+  if (align === 'center') {
+    const left = Math.floor(remaining / 2);
+    const right = remaining - left;
+    return ' '.repeat(left + 2) + trimmed + ' '.repeat(right + 2);
+  } else if (align === 'right') {
+    return ' '.repeat(remaining + 2) + trimmed + ' '.repeat(2);
+  } else {
+    return ' '.repeat(2) + trimmed + ' '.repeat(remaining + 2);
+  }
+}
+
+function parseEscPos(buffer) {
+  const items = [];
+  let i = 0;
+  
+  let currentAlign = 'left';
+  let currentBold = false;
+  let currentUnderline = false;
+  let currentInverse = false;
+  let currentSize = 'normal';
+  let textAccumulator = '';
+  
+  const flushText = () => {
+    if (textAccumulator) {
+      items.push({
+        type: 'text',
+        text: textAccumulator,
+        align: currentAlign,
+        bold: currentBold,
+        underline: currentUnderline,
+        inverse: currentInverse,
+        fontSize: currentSize
+      });
+      textAccumulator = '';
+    }
+  };
+  
+  while (i < buffer.length) {
+    const b = buffer[i];
+    
+    // ESC @ (Init)
+    if (b === 0x1B && buffer[i+1] === 0x40) {
+      flushText();
+      currentAlign = 'left';
+      currentBold = false;
+      currentUnderline = false;
+      currentInverse = false;
+      currentSize = 'normal';
+      i += 2;
+      continue;
+    }
+    
+    // ESC a (Align)
+    if (b === 0x1B && buffer[i+1] === 0x61) {
+      flushText();
+      const val = buffer[i+2];
+      if (val === 1) currentAlign = 'center';
+      else if (val === 2) currentAlign = 'right';
+      else currentAlign = 'left';
+      i += 3;
+      continue;
+    }
+    
+    // ESC E (Bold)
+    if (b === 0x1B && buffer[i+1] === 0x45) {
+      flushText();
+      currentBold = buffer[i+2] === 1;
+      i += 3;
+      continue;
+    }
+    
+    // ESC - (Underline)
+    if (b === 0x1B && buffer[i+1] === 0x2D) {
+      flushText();
+      currentUnderline = buffer[i+2] === 1;
+      i += 3;
+      continue;
+    }
+    
+    // GS B (Inverse)
+    if (b === 0x1D && buffer[i+1] === 0x42) {
+      flushText();
+      currentInverse = buffer[i+2] === 1;
+      i += 3;
+      continue;
+    }
+    
+    // GS ! (FontSize)
+    if (b === 0x1D && buffer[i+1] === 0x21) {
+      flushText();
+      const val = buffer[i+2];
+      if (val === 0x10) currentSize = 'double-width';
+      else if (val === 0x01) currentSize = 'double-height';
+      else if (val === 0x11) currentSize = 'double-size';
+      else if (val === 0x22) currentSize = '3x';
+      else if (val === 0x33) currentSize = '4x';
+      else currentSize = 'normal';
+      i += 3;
+      continue;
+    }
+    
+    // GS w, h, H (Barcode configuration)
+    if (b === 0x1D && buffer[i+1] === 0x77) { i += 3; continue; }
+    if (b === 0x1D && buffer[i+1] === 0x68) { i += 3; continue; }
+    if (b === 0x1D && buffer[i+1] === 0x48) { i += 3; continue; }
+    
+    // GS k (Barcode System B)
+    if (b === 0x1D && buffer[i+1] === 0x6B) {
+      flushText();
+      const typeByte = buffer[i+2];
+      const len = buffer[i+3];
+      const dataStart = i + 4;
+      let barcodeData = '';
+      for (let j = 0; j < len; j++) {
+        barcodeData += String.fromCharCode(buffer[dataStart + j]);
+      }
+      
+      if (barcodeData.startsWith('{B')) {
+        barcodeData = barcodeData.substring(2);
+      }
+      
+      items.push({
+        type: 'barcode',
+        text: barcodeData,
+        align: currentAlign
+      });
+      i += 4 + len;
+      continue;
+    }
+    
+    // GS ( k (QR Code)
+    if (b === 0x1D && buffer[i+1] === 0x28 && buffer[i+2] === 0x6B) {
+      flushText();
+      const pL = buffer[i+3];
+      const pH = buffer[i+4];
+      const len = pL + (pH << 8);
+      const cn = buffer[i+5];
+      const fn = buffer[i+6];
+      
+      if (fn === 0x50) { // fn 80 Store data
+        const m = buffer[i+7];
+        const dataStart = i + 8;
+        const qrDataLen = len - 3;
+        let qrData = '';
+        for (let j = 0; j < qrDataLen; j++) {
+          qrData += String.fromCharCode(buffer[dataStart + j]);
+        }
+        items.push({
+          type: 'qr',
+          text: qrData,
+          align: currentAlign
+        });
+      }
+      i += 5 + len;
+      continue;
+    }
+    
+    // GS v 0 (Image)
+    if (b === 0x1D && buffer[i+1] === 0x76 && buffer[i+2] === 0x30) {
+      flushText();
+      const m = buffer[i+3];
+      const xL = buffer[i+4];
+      const xH = buffer[i+5];
+      const yL = buffer[i+6];
+      const yH = buffer[i+7];
+      const bytesPerRow = xL + (xH << 8);
+      const height = yL + (yH << 8);
+      
+      items.push({
+        type: 'image',
+        width: bytesPerRow * 8,
+        height: height,
+        align: currentAlign
+      });
+      
+      i += 8 + (bytesPerRow * height);
+      continue;
+    }
+    
+    // ESC 3, ESC 2 (Line spacing)
+    if (b === 0x1B && buffer[i+1] === 0x33) { i += 3; continue; }
+    if (b === 0x1B && buffer[i+1] === 0x32) { i += 2; continue; }
+    
+    // ESC d (Feed)
+    if (b === 0x1B && buffer[i+1] === 0x64) {
+      flushText();
+      items.push({ type: 'feed', lines: buffer[i+2] });
+      i += 3;
+      continue;
+    }
+    
+    // Regular character
+    textAccumulator += String.fromCharCode(b);
+    i++;
+  }
+  
+  flushText();
+  return items;
+}
+
+function renderReceiptToAscii(items) {
+  const width = 38;
+  const border = '+' + '-'.repeat(width) + '+';
+  let lines = [];
+  lines.push('');
+  lines.push('               --- SIMULATED RECEIPT ---');
+  lines.push(border);
+  
+  items.forEach((item) => {
+    if (item.type === 'text') {
+      const textVal = item.text || '';
+      const paragraphs = textVal.split('\n');
+      
+      paragraphs.forEach((p) => {
+        let maxChars = width - 4;
+        if (item.fontSize === 'double-width' || item.fontSize === 'double-size' || item.fontSize === '2x') {
+          maxChars = Math.floor(maxChars / 2);
+        } else if (item.fontSize === '3x') {
+          maxChars = Math.floor(maxChars / 3);
+        } else if (item.fontSize === '4x') {
+          maxChars = Math.floor(maxChars / 4);
+        }
+        
+        const wrapped = wrapText(p, maxChars);
+        wrapped.forEach((line) => {
+          let content = line;
+          let paddingLeft = 2;
+          let paddingRight = 2;
+          const remainingSpace = width - 4 - content.length;
+          
+          if (item.align === 'center') {
+            paddingLeft = 2 + Math.floor(remainingSpace / 2);
+            paddingRight = width - paddingLeft - content.length;
+          } else if (item.align === 'right') {
+            paddingLeft = 2 + remainingSpace;
+            paddingRight = 2;
+          } else {
+            paddingLeft = 2;
+            paddingRight = 2 + remainingSpace;
+          }
+          
+          let formattedLine = ' '.repeat(paddingLeft) + content + ' '.repeat(paddingRight);
+          if (item.inverse) {
+            formattedLine = ' '.repeat(paddingLeft) + '[' + content + ']' + ' '.repeat(paddingRight - 2);
+          }
+          lines.push('|' + formattedLine + '|');
+        });
+      });
+    } else if (item.type === 'qr') {
+      lines.push('|' + ' '.repeat(width) + '|');
+      lines.push('|' + padString('[  QR CODE GRAPHIC  ]', width, 'center') + '|');
+      lines.push('|' + padString(item.text, width, 'center') + '|');
+      lines.push('|' + padString('  ■■■■■■■  ■ ■ ■  ■■■■■■■  ', width, 'center') + '|');
+      lines.push('|' + padString('  ■     ■  ■■  ■  ■     ■  ', width, 'center') + '|');
+      lines.push('|' + padString('  ■ ■■■ ■  ■ ■■   ■ ■■■ ■  ', width, 'center') + '|');
+      lines.push('|' + padString('  ■■■■■■■  ■   ■  ■■■■■■■  ', width, 'center') + '|');
+      lines.push('|' + padString('           ■■ ■■           ', width, 'center') + '|');
+      lines.push('|' + padString('  ■■■  ■■ ■  ■■■  ■■ ■  ■  ', width, 'center') + '|');
+      lines.push('|' + padString('  ■■■■■ ■■   ■ ■   ■■■■■■  ', width, 'center') + '|');
+      lines.push('|' + padString('  ■■■■■■  ■■■■■■ ■■■■■■■  ', width, 'center') + '|');
+      lines.push('|' + ' '.repeat(width) + '|');
+    } else if (item.type === 'barcode') {
+      lines.push('|' + ' '.repeat(width) + '|');
+      lines.push('|' + padString('[  BARCODE GRAPHIC  ]', width, 'center') + '|');
+      lines.push('|' + padString('  |||| | |||| || | || |||| |  ', width, 'center') + '|');
+      lines.push('|' + padString('  |||| | |||| || | || |||| |  ', width, 'center') + '|');
+      lines.push('|' + padString(item.text, width, 'center') + '|');
+      lines.push('|' + ' '.repeat(width) + '|');
+    } else if (item.type === 'image') {
+      lines.push('|' + ' '.repeat(width) + '|');
+      lines.push('|' + padString('[  DITHERED IMAGE  ]', width, 'center') + '|');
+      lines.push('|' + padString(`(${item.width}x${item.height} pixels)`, width, 'center') + '|');
+      lines.push('|' + padString('  ░░░▒▒▒▓▓▓███▓▓▓▒▒▒░░░  ', width, 'center') + '|');
+      lines.push('|' + ' '.repeat(width) + '|');
+    } else if (item.type === 'feed') {
+      for (let f = 0; f < Math.min(item.lines, 2); f++) {
+        lines.push('|' + ' '.repeat(width) + '|');
+      }
+    }
+  });
+  
+  lines.push(border);
+  lines.push('\n');
+  return lines.join('\n');
+}
+
 /**
  * Scans the system USB buses for thermal printers.
  * Looks for standard USB Printer class devices (Class 7) or known ZJ-58 Vendor/Product IDs.
@@ -249,10 +564,13 @@ class UsbPrinterDriver {
       if (this.isMock) {
         const timestamp = new Date().toISOString();
         const hex = buffer.toString('hex');
-        // Filter out non-printable ASCII characters for safe representation in logs
         const ascii = buffer.toString('ascii').replace(/[\x00-\x1F\x7F-\xFF]/g, '.');
         
-        const logEntry = `[${timestamp}] PRINT JOB (${buffer.length} bytes):\nHEX: ${hex}\nASCII: ${ascii}\n\n`;
+        // Render beautiful simulated receipt output with ASCII art QR / Barcode
+        const parsedItems = parseEscPos(buffer);
+        const receiptSim = renderReceiptToAscii(parsedItems);
+        
+        const logEntry = `[${timestamp}] PRINT JOB (${buffer.length} bytes):\nHEX: ${hex}\nASCII: ${ascii}\n\n${receiptSim}\n\n`;
         
         const outputFile = path.join(__dirname, 'mock_print_output.txt');
         try {
@@ -264,17 +582,33 @@ class UsbPrinterDriver {
         this._addMockLog(`Printed ${buffer.length} bytes to simulated printer.`);
         console.log(`[Driver Mock] Simulated print of ${buffer.length} bytes. logs written to backend/mock_print_output.txt`);
         
-        // Simulate minor writing delay
         return setTimeout(() => resolve(), 50);
       }
 
-      this.outEndpoint.transfer(buffer, (err) => {
-        if (err) {
-          console.error('[Driver] USB write transfer failed:', err);
-          return reject(err);
+      // Physical printer writing with chunking to prevent buffer overflow
+      const CHUNK_SIZE = 64; // 64 bytes is the standard USB Full Speed packet size
+      
+      (async () => {
+        try {
+          for (let offset = 0; offset < buffer.length; offset += CHUNK_SIZE) {
+            const chunk = buffer.subarray(offset, offset + CHUNK_SIZE);
+            await new Promise((res, rej) => {
+              this.outEndpoint.transfer(chunk, (err) => {
+                if (err) {
+                  console.error('[Driver] USB write transfer failed:', err);
+                  return rej(err);
+                }
+                res();
+              });
+            });
+            // 10ms delay matches slower physical print speeds to avoid buffer overruns
+            await new Promise(res => setTimeout(res, 10));
+          }
+          resolve();
+        } catch (err) {
+          reject(err);
         }
-        resolve();
-      });
+      })();
     });
   }
 
