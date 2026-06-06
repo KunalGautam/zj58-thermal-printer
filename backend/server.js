@@ -347,7 +347,13 @@ app.post('/api/print/image', upload.single('imageFile'), async (req, res) => {
     
     if (align) encoder.align(align);
     // Use GS v 0 raster mode (mode 0 = normal) for better ZJ-58 compatibility
-    encoder.imageRaster(packedBuffer, width, height, 0);
+    // Allow overriding via imageMode parameter: 'gs-v0' (default) or 'esc-star'
+    const imageMode = req.body.imageMode || 'gs-v0';
+    if (imageMode === 'esc-star') {
+      encoder.image(packedBuffer, width, height);
+    } else {
+      encoder.imageRaster(packedBuffer, width, height, 0);
+    }
     encoder.feed(feedLines);
     
     const printBuffer = encoder.getBuffer();

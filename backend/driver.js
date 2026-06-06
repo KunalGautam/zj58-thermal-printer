@@ -662,6 +662,9 @@ class UsbPrinterDriver {
 
       // Physical printer writing with chunking to prevent buffer overflow
       const CHUNK_SIZE = 64; // 64 bytes is the standard USB Full Speed packet size
+      // Larger buffers (images) need longer inter-chunk delays
+      const isLargeTransfer = buffer.length > 4096;
+      const CHUNK_DELAY = isLargeTransfer ? 30 : 10;
       
       (async () => {
         try {
@@ -676,8 +679,12 @@ class UsbPrinterDriver {
                 res();
               });
             });
-            // 10ms delay matches slower physical print speeds to avoid buffer overruns
-            await new Promise(res => setTimeout(res, 10));
+            // Delay matches slower physical print speeds to avoid buffer overruns
+            await new Promise(res => setTimeout(res, CHUNK_DELAY));
+          }
+          // Extra settle time after large transfers (GS v 0 raster images)
+          if (isLargeTransfer) {
+            await new Promise(res => setTimeout(res, 500));
           }
           resolve();
         } catch (err) {
