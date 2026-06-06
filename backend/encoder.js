@@ -28,6 +28,28 @@ class EscPosEncoder {
   }
 
   /**
+   * Reset printer state after native graphics (QR, barcode)
+   * Ensures symbol storage is cleared and printer returns to normal text mode
+   */
+  reset() {
+    // ESC @ - Full initialize (clears all buffers, resets all settings)
+    this.write([0x1B, 0x40]);
+    // ESC a 0 - Left align (default)
+    this.write([0x1B, 0x61, 0]);
+    // ESC E 0 - Bold off
+    this.write([0x1B, 0x45, 0]);
+    // ESC - 0 - Underline off
+    this.write([0x1B, 0x2D, 0]);
+    // GS B 0 - Inverse off
+    this.write([0x1D, 0x42, 0]);
+    // GS ! 0 - Normal font size
+    this.write([0x1D, 0x21, 0]);
+    // ESC 2 - Default line spacing
+    this.write([0x1B, 0x32]);
+    return this;
+  }
+
+  /**
    * Align text/graphics: 'left', 'center', 'right'
    */
   align(type) {
@@ -199,8 +221,11 @@ class EscPosEncoder {
     // fn 81: Print symbol data in symbol storage area
     this.write([0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 48]);
     
-    // Add line feed to ensure printer processes the QR command and returns to ready state
+    // Add line feed to ensure printer processes the QR command
     this.write([0x0A]);
+    
+    // Reset printer state after native QR to clear symbol storage
+    this.reset();
     
     return this;
   }
@@ -255,6 +280,9 @@ class EscPosEncoder {
 
     // LF to ensure printer processes the barcode command
     this.write([0x0A]);
+
+    // Reset printer state after native barcode
+    this.reset();
 
     return this;
   }
@@ -333,6 +361,9 @@ class EscPosEncoder {
     
     // LF to ensure printer processes the raster data
     this.write([0x0A]);
+    
+    // Reset printer state after raster image
+    this.reset();
     
     return this;
   }
