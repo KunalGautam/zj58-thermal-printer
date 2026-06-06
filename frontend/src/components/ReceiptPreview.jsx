@@ -38,74 +38,168 @@ export default function ReceiptPreview({ items }) {
       const layout = { y: totalHeight, height: 0, draw: null };
 
       if (item.type === 'text') {
-        const textVal = item.value || '';
-        const fontSize = item.fontSize || 'normal';
-        let scaleX = 1;
-        let scaleY = 1;
-        
-        if (fontSize === 'double-width') scaleX = 2;
-        else if (fontSize === 'double-height') scaleY = 2;
-        else if (fontSize === 'double-size' || fontSize === 'large' || fontSize === '2x') { scaleX = 2; scaleY = 2; }
-        else if (fontSize === '3x') { scaleX = 3; scaleY = 3; }
-        else if (fontSize === '4x') { scaleX = 4; scaleY = 4; }
+        if (Array.isArray(item.value)) {
+          // Composite Text block
+          let blockHeight = 0;
+          const linesToDraw = [];
 
-        const maxChars = Math.floor(32 / scaleX);
-        const fontHeight = 24 * scaleY;
-        const lineSpacing = item.lineSpacing !== undefined ? Number(item.lineSpacing) : 0;
-        
-        // Wrap text
-        const lines = wrapTextLines(textVal, maxChars);
-        const heightNeeded = lines.length * (fontHeight + lineSpacing) + (item.feedLines ? item.feedLines * 12 : 0);
+          item.value.forEach((lineObj) => {
+            const lineText = lineObj.text || '';
+            const fontSize = lineObj.fontSize || 'normal';
+            let scaleX = 1;
+            let scaleY = 1;
+            
+            if (fontSize === 'double-width') scaleX = 2;
+            else if (fontSize === 'double-height') scaleY = 2;
+            else if (fontSize === 'double-size' || fontSize === 'large' || fontSize === '2x') { scaleX = 2; scaleY = 2; }
+            else if (fontSize === '3x') { scaleX = 3; scaleY = 3; }
+            else if (fontSize === '4x') { scaleX = 4; scaleY = 4; }
 
-        layout.height = heightNeeded;
-        layout.draw = (y) => {
-          ctx.save();
-          ctx.textBaseline = 'top';
-          
-          lines.forEach((line, lineIdx) => {
-            const lineY = y + lineIdx * (fontHeight + lineSpacing);
+            const maxChars = Math.floor(32 / scaleX);
+            const fontHeight = 24 * scaleY;
+            const lineSpacing = lineObj.lineSpacing !== undefined ? Number(lineObj.lineSpacing) : 0;
             
-            // Set font style
-            let fontStyle = '';
-            if (item.bold) fontStyle += 'bold ';
-            fontStyle += `${14 * scaleY}px monospace`; // 14px mimics thermal font size nicely
-            ctx.font = fontStyle;
+            const wrappedLines = wrapTextLines(lineText, maxChars);
+            const lineBlockHeight = wrappedLines.length * (fontHeight + lineSpacing);
             
-            const textWidth = ctx.measureText(line).width;
-            let textX = 10;
-            if (item.align === 'center') textX = (PRINTER_WIDTH - textWidth) / 2;
-            else if (item.align === 'right') textX = PRINTER_WIDTH - textWidth - 10;
+            linesToDraw.push({
+              wrappedLines,
+              fontHeight,
+              lineSpacing,
+              scaleX,
+              scaleY,
+              bold: lineObj.bold,
+              underline: lineObj.underline,
+              inverse: lineObj.inverse,
+              align: lineObj.align || 'left',
+              yOffset: blockHeight
+            });
             
-            // Draw background if inverse mode
-            if (item.inverse) {
-              ctx.fillStyle = '#000000';
-              ctx.fillRect(
-                item.align === 'center' ? textX - 4 : 5, 
-                lineY, 
-                item.align === 'center' ? textWidth + 8 : PRINTER_WIDTH - 10, 
-                fontHeight
-              );
-              ctx.fillStyle = '#ffffff';
-            } else {
-              ctx.fillStyle = '#000000';
-            }
-            
-            ctx.fillText(line, textX, lineY);
-            
-            // Underline
-            if (item.underline) {
-              ctx.strokeStyle = '#000000';
-              ctx.lineWidth = 1.5 * scaleY;
-              ctx.beginPath();
-              ctx.moveTo(textX, lineY + fontHeight - 2);
-              ctx.lineTo(textX + textWidth, lineY + fontHeight - 2);
-              ctx.stroke();
-            }
+            blockHeight += lineBlockHeight;
           });
-          ctx.restore();
-        };
 
-        totalHeight += heightNeeded;
+          const feedLines = item.feedLines ? Number(item.feedLines) : 0;
+          const heightNeeded = blockHeight + (feedLines * 12);
+          layout.height = heightNeeded;
+          
+          layout.draw = (y) => {
+            ctx.save();
+            ctx.textBaseline = 'top';
+            
+            linesToDraw.forEach((ld) => {
+              ld.wrappedLines.forEach((lineText, lineIdx) => {
+                const lineY = y + ld.yOffset + lineIdx * (ld.fontHeight + ld.lineSpacing);
+                
+                let fontStyle = '';
+                if (ld.bold) fontStyle += 'bold ';
+                fontStyle += `${14 * ld.scaleY}px monospace`;
+                ctx.font = fontStyle;
+                
+                const textWidth = ctx.measureText(lineText).width;
+                let textX = 10;
+                if (ld.align === 'center') textX = (PRINTER_WIDTH - textWidth) / 2;
+                else if (ld.align === 'right') textX = PRINTER_WIDTH - textWidth - 10;
+                
+                if (ld.inverse) {
+                  ctx.fillStyle = '#000000';
+                  ctx.fillRect(
+                    ld.align === 'center' ? textX - 4 : 5, 
+                    lineY, 
+                    ld.align === 'center' ? textWidth + 8 : PRINTER_WIDTH - 10, 
+                    ld.fontHeight
+                  );
+                  ctx.fillStyle = '#ffffff';
+                } else {
+                  ctx.fillStyle = '#000000';
+                }
+                
+                ctx.fillText(lineText, textX, lineY);
+                
+                if (ld.underline) {
+                  ctx.strokeStyle = '#000000';
+                  ctx.lineWidth = 1.5 * ld.scaleY;
+                  ctx.beginPath();
+                  ctx.moveTo(textX, lineY + ld.fontHeight - 2);
+                  ctx.lineTo(textX + textWidth, lineY + ld.fontHeight - 2);
+                  ctx.stroke();
+                }
+              });
+            });
+            ctx.restore();
+          };
+
+          totalHeight += heightNeeded;
+        } else {
+          // Standard Text block
+          const textVal = item.value || '';
+          const fontSize = item.fontSize || 'normal';
+          let scaleX = 1;
+          let scaleY = 1;
+          
+          if (fontSize === 'double-width') scaleX = 2;
+          else if (fontSize === 'double-height') scaleY = 2;
+          else if (fontSize === 'double-size' || fontSize === 'large' || fontSize === '2x') { scaleX = 2; scaleY = 2; }
+          else if (fontSize === '3x') { scaleX = 3; scaleY = 3; }
+          else if (fontSize === '4x') { scaleX = 4; scaleY = 4; }
+
+          const maxChars = Math.floor(32 / scaleX);
+          const fontHeight = 24 * scaleY;
+          const lineSpacing = item.lineSpacing !== undefined ? Number(item.lineSpacing) : 0;
+          
+          // Wrap text
+          const lines = wrapTextLines(textVal, maxChars);
+          const heightNeeded = lines.length * (fontHeight + lineSpacing) + (item.feedLines ? item.feedLines * 12 : 0);
+
+          layout.height = heightNeeded;
+          layout.draw = (y) => {
+            ctx.save();
+            ctx.textBaseline = 'top';
+            
+            lines.forEach((line, lineIdx) => {
+              const lineY = y + lineIdx * (fontHeight + lineSpacing);
+              
+              // Set font style
+              let fontStyle = '';
+              if (item.bold) fontStyle += 'bold ';
+              fontStyle += `${14 * scaleY}px monospace`; // 14px mimics thermal font size nicely
+              ctx.font = fontStyle;
+              
+              const textWidth = ctx.measureText(line).width;
+              let textX = 10;
+              if (item.align === 'center') textX = (PRINTER_WIDTH - textWidth) / 2;
+              else if (item.align === 'right') textX = PRINTER_WIDTH - textWidth - 10;
+              
+              // Draw background if inverse mode
+              if (item.inverse) {
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(
+                  item.align === 'center' ? textX - 4 : 5, 
+                  lineY, 
+                  item.align === 'center' ? textWidth + 8 : PRINTER_WIDTH - 10, 
+                  fontHeight
+                );
+                ctx.fillStyle = '#ffffff';
+              } else {
+                ctx.fillStyle = '#000000';
+              }
+              
+              ctx.fillText(line, textX, lineY);
+              
+              // Underline
+              if (item.underline) {
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 1.5 * scaleY;
+                ctx.beginPath();
+                ctx.moveTo(textX, lineY + fontHeight - 2);
+                ctx.lineTo(textX + textWidth, lineY + fontHeight - 2);
+                ctx.stroke();
+              }
+            });
+            ctx.restore();
+          };
+
+          totalHeight += heightNeeded;
+        }
 
       } else if (item.type === 'qr') {
         const textVal = item.value || '';

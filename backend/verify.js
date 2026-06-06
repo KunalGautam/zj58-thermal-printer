@@ -64,6 +64,17 @@ try {
   assert.deepStrictEqual(buf4.slice(17, 25), Buffer.from([0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 50]));
   console.log('✔ Test 4 passed: QR Code configuration bytes match.');
 
+  // Test 5: Composite Text
+  const enc5 = new EscPosEncoder();
+  enc5.init()
+    .align('center').bold(true).text('Title\n')
+    .align('left').bold(false).text('Body\n');
+  const buf5 = enc5.getBuffer();
+  const bufStr5 = buf5.toString('ascii');
+  assert(bufStr5.includes('Title'));
+  assert(bufStr5.includes('Body'));
+  console.log('✔ Test 5 passed: Composite text compilation matches expected segments.');
+
 } catch (err) {
   console.error('✖ ESC/POS Encoder tests failed:', err);
   process.exit(1);

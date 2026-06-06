@@ -105,26 +105,43 @@ app.post('/api/print/text', (req, res) => {
     const encoder = new EscPosEncoder();
     encoder.init();
     
-    if (align) encoder.align(align);
-    if (lineSpacing !== undefined) encoder.lineSpacing(Number(lineSpacing));
-    
-    encoder.bold(!!bold);
-    encoder.underline(!!underline);
-    encoder.inverse(!!inverse);
-    encoder.emphasized(!!emphasized);
-    
-    if (fontSize) encoder.fontSize(fontSize);
-    
-    // Auto-wrap text at characters width depending on size
-    encoder.wrappedText(text, fontSize);
+    if (Array.isArray(text)) {
+      text.forEach((line) => {
+        encoder.align(line.align || 'left');
+        encoder.lineSpacing(line.lineSpacing !== undefined ? Number(line.lineSpacing) : undefined);
+        
+        encoder.bold(!!line.bold);
+        encoder.underline(!!line.underline);
+        encoder.inverse(!!line.inverse);
+        encoder.emphasized(!!line.emphasized);
+        
+        encoder.fontSize(line.fontSize || 'normal');
+        encoder.wrappedText(line.text || '', line.fontSize || 'normal');
+      });
+    } else {
+      if (align) encoder.align(align);
+      if (lineSpacing !== undefined) encoder.lineSpacing(Number(lineSpacing));
+      
+      encoder.bold(!!bold);
+      encoder.underline(!!underline);
+      encoder.inverse(!!inverse);
+      encoder.emphasized(!!emphasized);
+      
+      if (fontSize) encoder.fontSize(fontSize);
+      encoder.wrappedText(text, fontSize);
+    }
     
     // Default to at least a small feed so the printed lines are visible
     encoder.feed(feedLines !== undefined ? Number(feedLines) : 3);
     
     const buffer = encoder.getBuffer();
+    const descText = Array.isArray(text)
+      ? `Composite [${text.length} lines]`
+      : `Text Print: "${text.replace(/\n/g, ' ').substring(0, 25)}${text.length > 25 ? '...' : ''}"`;
+
     const jobId = queue.enqueue(buffer, {
       type: 'text',
-      description: `Text Print: "${text.replace(/\n/g, ' ').substring(0, 25)}${text.length > 25 ? '...' : ''}"`
+      description: descText
     });
 
     res.json({ success: true, jobId, message: 'Text print job added to queue.' });

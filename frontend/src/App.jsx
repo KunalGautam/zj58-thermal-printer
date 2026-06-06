@@ -17,7 +17,8 @@ import {
   FileCode,
   Layers,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Edit
 } from 'lucide-react';
 import ReceiptPreview from './components/ReceiptPreview';
 
@@ -86,6 +87,28 @@ export default function App() {
 
   // Receipt Builder state
   const [builderItems, setBuilderItems] = useState(INITIAL_RECEIPT);
+
+  // Edit State
+  const [editingItemId, setEditingItemId] = useState(null);
+
+  // WYSIWYG Composite Text state
+  const [isCompositeMode, setIsCompositeMode] = useState(true);
+  const [compositeLines, setCompositeLines] = useState([
+    { id: 'l1', text: 'ANTIGRAVITY SYSTEMS', bold: true, align: 'center', fontSize: '2x', lineSpacing: 0, underline: false, inverse: false, emphasized: false },
+    { id: 'l2', text: 'USB Receipt Terminal v1.0', bold: false, align: 'center', fontSize: 'normal', lineSpacing: 0, underline: false, inverse: false, emphasized: false },
+    { id: 'l3', text: '--------------------------------', bold: false, align: 'center', fontSize: 'normal', lineSpacing: 0, underline: false, inverse: false, emphasized: false }
+  ]);
+  const [compositeFeedLines, setCompositeFeedLines] = useState(3);
+
+  // Presets Management state
+  const [presets, setPresets] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('zj58_receipt_presets') || '[]');
+    } catch (e) {
+      return [];
+    }
+  });
+  const [presetNameInput, setPresetNameInput] = useState('');
 
   // Log message helper
   const addLog = (message, type = 'info') => {
@@ -284,7 +307,15 @@ export default function App() {
     };
 
     if (type === 'text') {
-      newItem = { ...newItem, ...textInput, value: textInput.text };
+      if (isCompositeMode) {
+        newItem = {
+          ...newItem,
+          value: compositeLines.map(line => ({ ...line })),
+          feedLines: compositeFeedLines
+        };
+      } else {
+        newItem = { ...newItem, ...textInput, value: textInput.text };
+      }
     } else if (type === 'qr') {
       newItem = { ...newItem, ...qrInput, value: qrInput.text };
     } else if (type === 'barcode') {
@@ -299,6 +330,135 @@ export default function App() {
 
     setBuilderItems((prev) => [...prev, newItem]);
     addLog(`Added ${type.toUpperCase()} block to receipt layout.`, 'success');
+  };
+
+  // Update an existing item in the Receipt Builder layout
+  const updateReceiptItem = () => {
+    if (!editingItemId) return;
+    
+    setBuilderItems((prev) => 
+      prev.map((item) => {
+        if (item.id !== editingItemId) return item;
+        
+        let updatedItem = {
+          ...item,
+          align: 'center'
+        };
+        
+        if (item.type === 'text') {
+          if (isCompositeMode) {
+            updatedItem = {
+              ...updatedItem,
+              value: compositeLines.map(line => ({ ...line })),
+              feedLines: compositeFeedLines
+            };
+          } else {
+            updatedItem = { ...updatedItem, ...textInput, value: textInput.text };
+          }
+        } else if (item.type === 'qr') {
+          updatedItem = { ...updatedItem, ...qrInput, value: qrInput.text };
+        } else if (item.type === 'barcode') {
+          updatedItem = { ...updatedItem, ...barcodeInput, value: barcodeInput.text };
+        } else if (item.type === 'image') {
+          updatedItem = { ...updatedItem, ...imageInput };
+        }
+        
+        return updatedItem;
+      })
+    );
+    
+    addLog(`Updated ${activeTab.toUpperCase()} block in receipt layout.`, 'success');
+    cancelEdit();
+  };
+
+  const cancelEdit = () => {
+    setEditingItemId(null);
+  };
+
+  const startEditItem = (item) => {
+    setEditingItemId(item.id);
+    setActiveTab(item.type);
+    
+    if (item.type === 'text') {
+      if (Array.isArray(item.value)) {
+        setIsCompositeMode(true);
+        setCompositeLines(item.value.map((line, index) => ({
+          id: line.id || `l_${Date.now()}_${index}_${Math.random()}`,
+          ...line
+        })));
+        setCompositeFeedLines(item.feedLines || 3);
+      } else {
+        setIsCompositeMode(false);
+        setTextInput({
+          text: item.value || '',
+          bold: !!item.bold,
+          underline: !!item.underline,
+          inverse: !!item.inverse,
+          emphasized: !!item.emphasized,
+          align: item.align || 'center',
+          fontSize: item.fontSize || 'normal',
+          lineSpacing: item.lineSpacing !== undefined ? item.lineSpacing : 30,
+          feedLines: item.feedLines !== undefined ? item.feedLines : 3
+        });
+      }
+    } else if (item.type === 'qr') {
+      setQrInput({
+        text: item.value || '',
+        size: item.size !== undefined ? item.size : 4,
+        ecc: item.ecc || 'M',
+        align: item.align || 'center',
+        feedLines: item.feedLines !== undefined ? item.feedLines : 4
+      });
+    } else if (item.type === 'barcode') {
+      setBarcodeInput({
+        text: item.value || '',
+        typeFormat: item.typeFormat || 'CODE128',
+        width: item.width !== undefined ? item.width : 3,
+        height: item.height !== undefined ? item.height : 70,
+        hri: item.hri || 'below',
+        align: item.align || 'center',
+        feedLines: item.feedLines !== undefined ? item.feedLines : 4
+      });
+    } else if (item.type === 'image') {
+      setImageInput({
+        value: item.value || '',
+        brightness: item.brightness !== undefined ? item.brightness : 0,
+        contrast: item.contrast !== undefined ? item.contrast : 0,
+        dither: item.dither || 'floyd-steinberg',
+        align: item.align || 'center',
+        feedLines: item.feedLines !== undefined ? item.feedLines : 4
+      });
+    }
+  };
+
+  // Presets Management helper methods
+  const savePreset = (name) => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      addLog('Please enter a name for the receipt template.', 'error');
+      return;
+    }
+    const newPresets = presets.filter((p) => p.name !== trimmed);
+    newPresets.push({
+      name: trimmed,
+      items: builderItems
+    });
+    setPresets(newPresets);
+    localStorage.setItem('zj58_receipt_presets', JSON.stringify(newPresets));
+    setPresetNameInput('');
+    addLog(`Receipt template "${trimmed}" saved successfully.`, 'success');
+  };
+
+  const loadPreset = (preset) => {
+    setBuilderItems(preset.items || []);
+    addLog(`Loaded receipt template "${preset.name}".`, 'success');
+  };
+
+  const deletePreset = (name) => {
+    const newPresets = presets.filter((p) => p.name !== name);
+    setPresets(newPresets);
+    localStorage.setItem('zj58_receipt_presets', JSON.stringify(newPresets));
+    addLog(`Deleted template "${name}".`, 'info');
   };
 
   // Delete builder items
@@ -325,17 +485,33 @@ export default function App() {
     let payload = {};
 
     if (type === 'text') {
-      payload = {
-        text: textInput.text,
-        bold: textInput.bold,
-        underline: textInput.underline,
-        inverse: textInput.inverse,
-        emphasized: textInput.emphasized,
-        align: textInput.align,
-        fontSize: textInput.fontSize,
-        lineSpacing: textInput.lineSpacing,
-        feedLines: textInput.feedLines
-      };
+      if (isCompositeMode) {
+        payload = {
+          text: compositeLines.map(line => ({
+            text: line.text,
+            bold: line.bold,
+            underline: line.underline,
+            inverse: line.inverse,
+            emphasized: line.emphasized,
+            align: line.align,
+            fontSize: line.fontSize,
+            lineSpacing: line.lineSpacing
+          })),
+          feedLines: compositeFeedLines
+        };
+      } else {
+        payload = {
+          text: textInput.text,
+          bold: textInput.bold,
+          underline: textInput.underline,
+          inverse: textInput.inverse,
+          emphasized: textInput.emphasized,
+          align: textInput.align,
+          fontSize: textInput.fontSize,
+          lineSpacing: textInput.lineSpacing,
+          feedLines: textInput.feedLines
+        };
+      }
     } else if (type === 'qr') {
       payload = qrInput;
     } else if (type === 'barcode') {
@@ -759,12 +935,27 @@ export default function App() {
                                 {item.type}
                               </div>
                               <div className="text-[10px] font-mono text-slate-500 truncate max-w-[250px]">
-                                {item.type === 'image' ? `Dither: ${item.dither}` : item.value}
+                                {item.type === 'image' 
+                                  ? `Dither: ${item.dither}` 
+                                  : (Array.isArray(item.value) 
+                                      ? `Rich: ${item.value.map(l => l.text).filter(Boolean).join(' | ').substring(0, 40)}${item.value.map(l => l.text).filter(Boolean).join(' | ').length > 40 ? '...' : ''}` 
+                                      : item.value)}
                               </div>
                             </div>
                           </div>
                           
                           <div className="flex items-center gap-1.5 opacity-40 group-hover:opacity-100 transition-all">
+                            <button 
+                              onClick={() => startEditItem(item)}
+                              className={`p-1 cursor-pointer transition-all ${
+                                editingItemId === item.id 
+                                  ? 'text-cyan-400 hover:text-cyan-300' 
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                              title="Edit Item"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
                             <button 
                               onClick={() => moveBuilderItem(idx, -1)}
                               disabled={idx === 0}
@@ -811,96 +1002,367 @@ export default function App() {
               {/* TAB 2: TEXT FORMATTING OPTIONS */}
               {activeTab === 'text' && (
                 <div className="flex flex-col gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1.5 font-mono-terminal">Receipt Text Input</label>
-                    <textarea 
-                      value={textInput.text}
-                      onChange={(e) => setTextInput({ ...textInput, text: e.target.value })}
-                      rows="3"
-                      className="w-full bg-[#080b11] border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
-                      placeholder="Type lines of text to print..."
-                    />
+                  {/* Mode switch */}
+                  <div className="flex bg-[#080b11] border border-slate-800 p-1 rounded-lg">
+                    <button
+                      onClick={() => setIsCompositeMode(true)}
+                      className={`flex-1 py-1 text-xs font-mono font-semibold rounded transition-all cursor-pointer ${
+                        isCompositeMode 
+                          ? 'bg-cyan-500/10 border border-cyan-500/20 text-cyan-400' 
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      WYSIWYG Composite Editor
+                    </button>
+                    <button
+                      onClick={() => setIsCompositeMode(false)}
+                      className={`flex-1 py-1 text-xs font-mono font-semibold rounded transition-all cursor-pointer ${
+                        !isCompositeMode 
+                          ? 'bg-cyan-500/10 border border-cyan-500/20 text-cyan-400' 
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Plain Text Block
+                    </button>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-400 mb-1.5 font-mono-terminal">Font Alignment</label>
-                      <select 
-                        value={textInput.align}
-                        onChange={(e) => setTextInput({ ...textInput, align: e.target.value })}
-                        className="w-full bg-[#080b11] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 font-mono focus:outline-none focus:border-cyan-500"
-                      >
-                        <option value="left">Left</option>
-                        <option value="center">Center</option>
-                        <option value="right">Right</option>
-                      </select>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-400 mb-1.5 font-mono-terminal">Font Sizing</label>
-                      <select 
-                        value={textInput.fontSize}
-                        onChange={(e) => setTextInput({ ...textInput, fontSize: e.target.value })}
-                        className="w-full bg-[#080b11] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 font-mono focus:outline-none focus:border-cyan-500"
-                      >
-                        <option value="normal">Normal (1x1)</option>
-                        <option value="double-width">Double Width (2x1)</option>
-                        <option value="double-height">Double Height (1x2)</option>
-                        <option value="double-size">Double Size (2x2)</option>
-                        <option value="3x">3x Triple Zoom</option>
-                        <option value="4x">4x Quad Zoom</option>
-                      </select>
-                    </div>
+                  {isCompositeMode ? (
+                    /* COMPOSITE EDITOR */
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-slate-400 font-mono-terminal">WYSIWYG Text Lines</label>
+                        <button
+                          onClick={() => setCompositeLines([])}
+                          className="text-[10px] border border-red-500/30 text-red-400 hover:bg-red-500/5 hover:border-red-500/50 rounded px-1.5 py-0.5 transition-all cursor-pointer font-mono"
+                        >
+                          Clear Lines
+                        </button>
+                      </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-400 mb-1.5 font-mono-terminal">Paper Feed Lines</label>
-                      <input 
-                        type="number" 
-                        value={textInput.feedLines}
-                        onChange={(e) => setTextInput({ ...textInput, feedLines: Number(e.target.value) })}
-                        min="0" max="20"
-                        className="w-full bg-[#080b11] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 font-mono focus:outline-none focus:border-cyan-500"
-                      />
-                    </div>
-                  </div>
+                      <div className="flex flex-col gap-3 max-h-[350px] overflow-y-auto pr-1">
+                        {compositeLines.length === 0 ? (
+                          <div className="border border-dashed border-slate-800 rounded-xl py-6 px-4 flex flex-col items-center justify-center text-center text-slate-500">
+                            <p className="text-[11px] font-mono-terminal">No text lines created.</p>
+                            <p className="text-[10px] mt-0.5">Click "Add New Text Line" to start composing.</p>
+                          </div>
+                        ) : (
+                          compositeLines.map((line, idx) => (
+                            <div key={line.id} className="flex flex-col gap-2 p-3 bg-[#080b11] border border-slate-800 rounded-lg group">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-mono text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded">{idx + 1}</span>
+                                <input 
+                                  type="text"
+                                  value={line.text}
+                                  onChange={(e) => {
+                                    const newLines = [...compositeLines];
+                                    newLines[idx].text = e.target.value;
+                                    setCompositeLines(newLines);
+                                  }}
+                                  className={`flex-1 bg-[#05070a] border border-slate-800 rounded px-2.5 py-1 text-sm text-slate-300 focus:outline-none focus:border-cyan-500 font-mono ${
+                                    line.bold ? 'font-bold' : ''
+                                  } ${
+                                    line.underline ? 'underline' : ''
+                                  } ${
+                                    line.align === 'center' ? 'text-center' : line.align === 'right' ? 'text-right' : 'text-left'
+                                  } ${
+                                    line.inverse ? 'bg-white !text-black' : ''
+                                  }`}
+                                  style={{
+                                    fontSize: line.fontSize === '2x' || line.fontSize === 'double-size' || line.fontSize === 'large' ? '1.15rem' : line.fontSize === '3x' ? '1.3rem' : line.fontSize === '4x' ? '1.5rem' : '0.875rem'
+                                  }}
+                                  placeholder="Type text for this line..."
+                                />
+                                
+                                <div className="flex items-center gap-1">
+                                  <button 
+                                    onClick={() => {
+                                      if (idx === 0) return;
+                                      const newLines = [...compositeLines];
+                                      const temp = newLines[idx];
+                                      newLines[idx] = newLines[idx - 1];
+                                      newLines[idx - 1] = temp;
+                                      setCompositeLines(newLines);
+                                    }}
+                                    disabled={idx === 0}
+                                    className="p-1 text-slate-500 hover:text-slate-300 disabled:opacity-20 cursor-pointer"
+                                    title="Move line up"
+                                  >
+                                    <ArrowUp className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      if (idx === compositeLines.length - 1) return;
+                                      const newLines = [...compositeLines];
+                                      const temp = newLines[idx];
+                                      newLines[idx] = newLines[idx + 1];
+                                      newLines[idx + 1] = temp;
+                                      setCompositeLines(newLines);
+                                    }}
+                                    disabled={idx === compositeLines.length - 1}
+                                    className="p-1 text-slate-500 hover:text-slate-300 disabled:opacity-20 cursor-pointer"
+                                    title="Move line down"
+                                  >
+                                    <ArrowDown className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      const newLines = compositeLines.filter((l) => l.id !== line.id);
+                                      setCompositeLines(newLines);
+                                    }}
+                                    className="p-1 text-red-500 hover:text-red-400 cursor-pointer"
+                                    title="Delete line"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              
+                              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-900/60">
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => {
+                                      const newLines = [...compositeLines];
+                                      newLines[idx].bold = !newLines[idx].bold;
+                                      setCompositeLines(newLines);
+                                    }}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer ${
+                                      line.bold 
+                                        ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-400' 
+                                        : 'bg-[#05070a] border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-700'
+                                    }`}
+                                    title="Bold"
+                                  >
+                                    B
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      const newLines = [...compositeLines];
+                                      newLines[idx].underline = !newLines[idx].underline;
+                                      setCompositeLines(newLines);
+                                    }}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono border underline transition-all cursor-pointer ${
+                                      line.underline 
+                                        ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-400' 
+                                        : 'bg-[#05070a] border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-700'
+                                    }`}
+                                    title="Underline"
+                                  >
+                                    U
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      const newLines = [...compositeLines];
+                                      newLines[idx].inverse = !newLines[idx].inverse;
+                                      setCompositeLines(newLines);
+                                    }}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer ${
+                                      line.inverse 
+                                        ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-400' 
+                                        : 'bg-[#05070a] border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-700'
+                                    }`}
+                                    title="Inverse (White on Black)"
+                                  >
+                                    Inv
+                                  </button>
+                                </div>
 
-                  {/* Formatting options toggles */}
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-2 font-mono-terminal">Text Styling Effects</label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {[
-                        { key: 'bold', label: 'Bold' },
-                        { key: 'underline', label: 'Underline' },
-                        { key: 'inverse', label: 'Inverse (W/B)' },
-                        { key: 'emphasized', label: 'Emphasized' }
-                      ].map((item) => (
-                        <label key={item.key} className="flex items-center gap-2 p-2 bg-[#080b11] border border-slate-800 hover:border-slate-700 rounded-lg cursor-pointer text-xs select-none">
+                                <span className="w-px h-3.5 bg-slate-800"></span>
+
+                                <div className="flex gap-1">
+                                  {['left', 'center', 'right'].map((alignOpt) => (
+                                    <button
+                                      key={alignOpt}
+                                      onClick={() => {
+                                        const newLines = [...compositeLines];
+                                        newLines[idx].align = alignOpt;
+                                        setCompositeLines(newLines);
+                                      }}
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono border capitalize transition-all cursor-pointer ${
+                                        line.align === alignOpt
+                                          ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-400'
+                                          : 'bg-[#05070a] border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-700'
+                                      }`}
+                                    >
+                                      {alignOpt}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                <span className="w-px h-3.5 bg-slate-800"></span>
+
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] text-slate-500 font-mono">Size:</span>
+                                  <select
+                                    value={line.fontSize || 'normal'}
+                                    onChange={(e) => {
+                                      const newLines = [...compositeLines];
+                                      newLines[idx].fontSize = e.target.value;
+                                      setCompositeLines(newLines);
+                                    }}
+                                    className="bg-[#05070a] border border-slate-800 rounded px-1 py-0.5 text-[10px] text-slate-400 font-mono focus:outline-none focus:border-cyan-500"
+                                  >
+                                    <option value="normal">1x (Normal)</option>
+                                    <option value="double-width">2xW (Double Width)</option>
+                                    <option value="double-height">2xH (Double Height)</option>
+                                    <option value="double-size">2x (Double Size)</option>
+                                    <option value="3x">3x (Triple)</option>
+                                    <option value="4x">4x (Quad)</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setCompositeLines([
+                            ...compositeLines,
+                            {
+                              id: `l_${Date.now()}_${Math.random()}`,
+                              text: '',
+                              bold: false,
+                              underline: false,
+                              inverse: false,
+                              emphasized: false,
+                              align: 'left',
+                              fontSize: 'normal',
+                              lineSpacing: 0
+                            }
+                          ]);
+                        }}
+                        className="w-full py-2 border border-dashed border-slate-800 hover:border-slate-700 hover:bg-[#080b11]/50 text-slate-400 hover:text-slate-300 rounded-lg text-xs font-semibold font-mono transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" /> Add New Text Line
+                      </button>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-400 mb-1.5 font-mono-terminal">Paper Feed Lines</label>
                           <input 
-                            type="checkbox"
-                            checked={textInput[item.key]}
-                            onChange={(e) => setTextInput({ ...textInput, [item.key]: e.target.checked })}
-                            className="rounded text-cyan-600 bg-slate-900 border-slate-800 focus:ring-0"
+                            type="number" 
+                            value={compositeFeedLines}
+                            onChange={(e) => setCompositeFeedLines(Number(e.target.value))}
+                            min="0" max="20"
+                            className="w-full bg-[#080b11] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 font-mono focus:outline-none focus:border-cyan-500"
                           />
-                          <span className="text-slate-300 font-mono">{item.label}</span>
-                        </label>
-                      ))}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    /* PLAIN TEXT BLOCK (ORIGINAL PANEL) */
+                    <div className="flex flex-col gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-1.5 font-mono-terminal">Receipt Text Input</label>
+                        <textarea 
+                          value={textInput.text}
+                          onChange={(e) => setTextInput({ ...textInput, text: e.target.value })}
+                          rows="3"
+                          className="w-full bg-[#080b11] border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 font-mono"
+                          placeholder="Type lines of text to print..."
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-400 mb-1.5 font-mono-terminal">Font Alignment</label>
+                          <select 
+                            value={textInput.align}
+                            onChange={(e) => setTextInput({ ...textInput, align: e.target.value })}
+                            className="w-full bg-[#080b11] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 font-mono focus:outline-none focus:border-cyan-500"
+                          >
+                            <option value="left">Left</option>
+                            <option value="center">Center</option>
+                            <option value="right">Right</option>
+                          </select>
+                        </div>
+                        
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-400 mb-1.5 font-mono-terminal">Font Sizing</label>
+                          <select 
+                            value={textInput.fontSize}
+                            onChange={(e) => setTextInput({ ...textInput, fontSize: e.target.value })}
+                            className="w-full bg-[#080b11] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 font-mono focus:outline-none focus:border-cyan-500"
+                          >
+                            <option value="normal">Normal (1x1)</option>
+                            <option value="double-width">Double Width (2x1)</option>
+                            <option value="double-height">Double Height (1x2)</option>
+                            <option value="double-size">Double Size (2x2)</option>
+                            <option value="3x">3x Triple Zoom</option>
+                            <option value="4x">4x Quad Zoom</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-400 mb-1.5 font-mono-terminal">Paper Feed Lines</label>
+                          <input 
+                            type="number" 
+                            value={textInput.feedLines}
+                            onChange={(e) => setTextInput({ ...textInput, feedLines: Number(e.target.value) })}
+                            min="0" max="20"
+                            className="w-full bg-[#080b11] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 font-mono focus:outline-none focus:border-cyan-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-2 font-mono-terminal">Text Styling Effects</label>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                          {[
+                            { key: 'bold', label: 'Bold' },
+                            { key: 'underline', label: 'Underline' },
+                            { key: 'inverse', label: 'Inverse (W/B)' },
+                            { key: 'emphasized', label: 'Emphasized' }
+                          ].map((item) => (
+                            <label key={item.key} className="flex items-center gap-2 p-2 bg-[#080b11] border border-slate-800 hover:border-slate-700 rounded-lg cursor-pointer text-xs select-none">
+                              <input 
+                                type="checkbox"
+                                checked={textInput[item.key]}
+                                onChange={(e) => setTextInput({ ...textInput, [item.key]: e.target.checked })}
+                                className="rounded text-cyan-600 bg-slate-900 border-slate-800 focus:ring-0"
+                              />
+                              <span className="text-slate-300 font-mono">{item.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Actions buttons */}
                   <div className="pt-4 border-t border-slate-800/60 flex gap-3">
-                    <button 
-                      onClick={() => printQuickJob('text')}
-                      className="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-blue cursor-pointer"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-white" /> Print Text Now
-                    </button>
-                    <button 
-                      onClick={() => addToReceipt('text')}
-                      className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add to Receipt
-                    </button>
+                    {editingItemId && builderItems.some(item => item.id === editingItemId && item.type === 'text') ? (
+                      <>
+                        <button 
+                          onClick={updateReceiptItem}
+                          className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-success cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" /> Update Receipt Item
+                        </button>
+                        <button 
+                          onClick={cancelEdit}
+                          className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" /> Cancel Edit
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button 
+                          onClick={() => printQuickJob('text')}
+                          className="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-blue cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" /> Print Text Now
+                        </button>
+                        <button 
+                          onClick={() => addToReceipt('text')}
+                          className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add to Receipt
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -964,18 +1426,37 @@ export default function App() {
                   </div>
 
                   <div className="pt-4 border-t border-slate-800/60 flex gap-3">
-                    <button 
-                      onClick={() => printQuickJob('qr')}
-                      className="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-blue cursor-pointer"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-white" /> Print QR Code
-                    </button>
-                    <button 
-                      onClick={() => addToReceipt('qr')}
-                      className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add to Receipt
-                    </button>
+                    {editingItemId && builderItems.some(item => item.id === editingItemId && item.type === 'qr') ? (
+                      <>
+                        <button 
+                          onClick={updateReceiptItem}
+                          className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-success cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" /> Update Receipt Item
+                        </button>
+                        <button 
+                          onClick={cancelEdit}
+                          className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" /> Cancel Edit
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button 
+                          onClick={() => printQuickJob('qr')}
+                          className="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-blue cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" /> Print QR Code
+                        </button>
+                        <button 
+                          onClick={() => addToReceipt('qr')}
+                          className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add to Receipt
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -1071,18 +1552,37 @@ export default function App() {
                   </div>
 
                   <div className="pt-4 border-t border-slate-800/60 flex gap-3">
-                    <button 
-                      onClick={() => printQuickJob('barcode')}
-                      className="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-blue cursor-pointer"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-white" /> Print Barcode
-                    </button>
-                    <button 
-                      onClick={() => addToReceipt('barcode')}
-                      className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add to Receipt
-                    </button>
+                    {editingItemId && builderItems.some(item => item.id === editingItemId && item.type === 'barcode') ? (
+                      <>
+                        <button 
+                          onClick={updateReceiptItem}
+                          className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-success cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" /> Update Receipt Item
+                        </button>
+                        <button 
+                          onClick={cancelEdit}
+                          className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" /> Cancel Edit
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button 
+                          onClick={() => printQuickJob('barcode')}
+                          className="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-blue cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" /> Print Barcode
+                        </button>
+                        <button 
+                          onClick={() => addToReceipt('barcode')}
+                          className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add to Receipt
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -1179,20 +1679,40 @@ export default function App() {
                   </div>
 
                   <div className="pt-4 border-t border-slate-800/60 flex gap-3">
-                    <button 
-                      onClick={() => printQuickJob('image')}
-                      disabled={!imageInput.value}
-                      className="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-blue cursor-pointer disabled:opacity-50"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-white" /> Print Image
-                    </button>
-                    <button 
-                      onClick={() => addToReceipt('image')}
-                      disabled={!imageInput.value}
-                      className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add to Receipt
-                    </button>
+                    {editingItemId && builderItems.some(item => item.id === editingItemId && item.type === 'image') ? (
+                      <>
+                        <button 
+                          onClick={updateReceiptItem}
+                          disabled={!imageInput.value}
+                          className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-success cursor-pointer disabled:opacity-50"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" /> Update Receipt Item
+                        </button>
+                        <button 
+                          onClick={cancelEdit}
+                          className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" /> Cancel Edit
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button 
+                          onClick={() => printQuickJob('image')}
+                          disabled={!imageInput.value}
+                          className="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 glow-blue cursor-pointer disabled:opacity-50"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" /> Print Image
+                        </button>
+                        <button 
+                          onClick={() => addToReceipt('image')}
+                          disabled={!imageInput.value}
+                          className="px-4 py-2 border border-slate-800 hover:border-slate-700 active:bg-slate-800/10 text-slate-300 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add to Receipt
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -1241,6 +1761,52 @@ export default function App() {
               >
                 Load Cafe Invoice
               </button>
+            </div>
+
+            {/* Custom Saved Templates */}
+            <div className="mt-5 pt-4 border-t border-slate-800/60">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2.5 font-mono-terminal">Custom Saved Templates</h3>
+              
+              <div className="flex gap-2 mb-3">
+                <input 
+                  type="text"
+                  placeholder="Template Name..."
+                  value={presetNameInput}
+                  onChange={(e) => setPresetNameInput(e.target.value)}
+                  className="flex-1 bg-[#080b11] border border-slate-800 rounded px-2.5 py-1 text-xs text-slate-300 font-mono focus:outline-none focus:border-purple-500"
+                />
+                <button
+                  onClick={() => savePreset(presetNameInput)}
+                  className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-semibold transition-all cursor-pointer flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Save Current
+                </button>
+              </div>
+
+              {presets.length === 0 ? (
+                <p className="text-[11px] text-slate-600 italic">No custom templates saved yet.</p>
+              ) : (
+                <div className="flex flex-col gap-1.5 max-h-[140px] overflow-y-auto pr-1">
+                  {presets.map((preset) => (
+                    <div key={preset.name} className="flex items-center justify-between bg-[#080b11] border border-slate-800 px-3 py-1.5 rounded text-xs group">
+                      <button 
+                        onClick={() => loadPreset(preset)}
+                        className="text-left text-purple-400 hover:text-purple-300 font-mono truncate max-w-[80%] cursor-pointer"
+                        title="Click to load template"
+                      >
+                        {preset.name} ({preset.items.length} items)
+                      </button>
+                      <button 
+                        onClick={() => deletePreset(preset.name)}
+                        className="text-red-400 hover:text-red-300 opacity-60 group-hover:opacity-100 transition-opacity cursor-pointer"
+                        title="Delete template"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
