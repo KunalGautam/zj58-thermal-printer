@@ -103,8 +103,11 @@ class UsbPrinterDriver {
       return { success: true, isMock: true };
     }
 
+    let dev = null;
+    let printerIface = null;
+
     try {
-      const dev = usb.findByIds(vendorId, productId);
+      dev = usb.findByIds(vendorId, productId);
       if (!dev) {
         throw new Error(`USB Device 0x${vendorId.toString(16).padStart(4, '0')}:0x${productId.toString(16).padStart(4, '0')} not found on system.`);
       }
@@ -112,16 +115,17 @@ class UsbPrinterDriver {
       dev.open();
 
       // Find the interface with class 7 (printer) or fallback to interface 0
-      let printerIface = dev.interfaces[0];
       for (const iface of dev.interfaces) {
         if (iface.descriptor.bInterfaceClass === 7) {
           printerIface = iface;
           break;
         }
       }
+      if (!printerIface) {
+        printerIface = dev.interfaces[0];
+      }
 
       if (!printerIface) {
-        dev.close();
         throw new Error('Device does not expose any valid USB interfaces.');
       }
 
@@ -131,22 +135,17 @@ class UsbPrinterDriver {
           printerIface.detachKernelDriver();
         }
       } catch (err) {
-        // Can be ignored if it's not a platform error or not supported
         console.warn('[Driver] Detach kernel driver skipped or failed (safe on Windows/macOS):', err.message);
       }
 
       // Claim the interface
       printerIface.claim();
 
-      // Find the bulk OUT endpoint to send data
-      const outEp = printerIface.endpoints.find(
-        e => e.direction === 'out' && e.transferType === usb.LIBUSB_TRANSFER_TYPE_BULK
-      );
+      // Find the first OUT endpoint to send data (usually bulk)
+      const outEp = printerIface.endpoints.find(e => e.direction === 'out');
 
       if (!outEp) {
-        printerIface.release(true);
-        dev.close();
-        throw new Error('No bulk OUT endpoint found on claimed USB interface.');
+        throw new Error('No OUT endpoint found on claimed USB interface.');
       }
 
       this.device = dev;
@@ -166,6 +165,22 @@ class UsbPrinterDriver {
       return { success: true, isMock: false };
 
     } catch (err) {
+      // Safe asynchronous cleanup on error
+      if (printerIface) {
+        try {
+          printerIface.release(true, () => {
+            try { dev.close(); } catch (e) {}
+          });
+        } catch (releaseErr) {
+          try { dev.close(); } catch (e) {}
+        }
+      } else if (dev) {
+        try { dev.close(); } catch (e) {}
+      }
+
+      this.device = null;
+      this.iface = null;
+      this.outEndpoint = null;
       this.isConnected = false;
       this.isMock = false;
       this.currentPrinterInfo = null;
@@ -189,24 +204,35 @@ class UsbPrinterDriver {
       return;
     }
 
+    const dev = this.device;
+    const iface = this.iface;
+
+    this.device = null;
+    this.iface = null;
+    this.outEndpoint = null;
+    this.isConnected = false;
+    this.isMock = false;
+    this.currentPrinterInfo = null;
+
     try {
-      if (this.iface) {
+      if (iface) {
         await new Promise((resolve) => {
-          this.iface.release(true, () => resolve());
+          try {
+            iface.release(true, () => {
+              try { dev.close(); } catch (e) {}
+              resolve();
+            });
+          } catch (e) {
+            try { dev.close(); } catch (e2) {}
+            resolve();
+          }
         });
-      }
-      if (this.device) {
-        this.device.close();
+      } else if (dev) {
+        try { dev.close(); } catch (e) {}
       }
     } catch (err) {
       console.error('[Driver] Disconnection error:', err);
     } finally {
-      this.device = null;
-      this.iface = null;
-      this.outEndpoint = null;
-      this.isConnected = false;
-      this.isMock = false;
-      this.currentPrinterInfo = null;
       console.log('[Driver] Disconnected from physical USB printer');
     }
   }
